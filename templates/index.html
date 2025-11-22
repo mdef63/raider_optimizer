@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Оптимизатор Улучшений Raider.IO</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Оптимизатор Улучшений Raider.IO</h1>
+            <div class="subtitle">Найдите оптимальный путь к желаемому среднему уровню предметов</div>
+        </header>
+
+        <div class="main-content">
+            <div class="form-section">
+                <h2>Введите данные персонажа</h2>
+                <form id="characterForm">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="region">Регион:</label>
+                            <select id="region" required>
+                                <option value="eu">Европа (EU)</option>
+                                <option value="us">США (US)</option>
+                                <option value="kr">Корея (KR)</option>
+                                <option value="tw">Тайвань (TW)</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="realm">Сервер:</label>
+                            <input type="text" id="realm" placeholder="Начните вводить название сервера..." required autocomplete="off">
+                            <div id="realmSuggestions" class="suggestions"></div>
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="character_name">Имя персонажа:</label>
+                            <input type="text" id="character_name" placeholder="Введите имя персонажа" required>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="target_average">Целевое среднее значение:</label>
+                            <input type="number" id="target_average" step="0.1" min="0" placeholder="например: 720.5" required>
+                        </div>
+                    </div>
+
+                    <button type="submit" id="analyzeBtn">Анализировать улучшения</button>
+                </form>
+            </div>
+
+            <div class="loading" id="loading">
+                <div class="spinner"></div>
+                <p>Анализируем данные персонажа...</p>
+                <p id="loadingDetails"></p>
+            </div>
+
+            <div class="results-section" id="resultsSection">
+                <div id="characterInfo" class="character-info" style="display: none;"></div>
+                <div id="resultMessage"></div>
+                <div id="summaryCards" class="summary-cards"></div>
+                <div id="resourcesInfo" class="resources-info" style="display: none;"></div>
+
+                <!-- Текущая экипировка -->
+                <div id="currentItemsSection">
+                    <div id="currentItems" class="items-grid"></div>
+                </div>
+
+                <!-- Финальная экипировка -->
+                <div id="finalItemsSection" style="display: none;">
+                    <h3>Экипировка после улучшений:</h3>
+                    <div id="finalItems" class="items-grid"></div>
+                </div>
+
+                <!-- Сводка по изготовленным предметам -->
+                <div id="craftedSummary" class="crafted-summary" style="display: none;">
+                    <h3>Изготовленные предметы:</h3>
+                    <div id="craftedItemsList"></div>
+                </div>
+
+                <div id="upgradesList" class="upgrades-list"></div>
+                <div id="additionalInfo" class="stats-grid" style="display: none;"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Глобальные переменные
+        let allRealms = [];
+        let filteredRealms = [];
+
+        // Загружаем список серверов при загрузке страницы
+        document.addEventListener('DOMContentLoaded', async function() {
+            try {
+                const response = await fetch('/api/realms');
+                const data = await response.json();
+
+                allRealms = data.realms;
+                filteredRealms = [...allRealms];
+
+                console.log(`Загружено ${data.realms.length} серверов`);
+            } catch (error) {
+                console.error('Не удалось загрузить список серверов:', error);
+            }
+        });
+
+        // Обработчик формы
+        document.getElementById('characterForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+
+            const region = document.getElementById('region').value;
+            const realm = document.getElementById('realm').value.trim();
+            const characterName = document.getElementById('character_name').value.trim();
+            const targetAverage = parseFloat(document.getElementById('target_average').value);
+
+            // Валидация
+            if (!realm) {
+                showError('Пожалуйста, выберите сервер');
+                return;
+            }
+
+            if (!characterName) {
+                showError('Пожалуйста, введите имя персонажа');
+                return;
+            }
+
+            if (isNaN(targetAverage) || targetAverage <= 0) {
+                showError('Пожалуйста, введите корректное целевое значение');
+                return;
+            }
+
+            // Проверяем, что сервер существует
+            if (!allRealms.includes(realm)) {
+                showError('Пожалуйста, выберите корректный сервер из списка');
+                return;
+            }
+
+            // Показываем загрузку
+            showLoading(`Анализ персонажа ${characterName}@${realm}...`);
+            document.getElementById('resultsSection').style.display = 'none';
+            document.getElementById('analyzeBtn').disabled = true;
+
+            try {
+                const response = await fetch('/api/character', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        region: region,
+                        realm: realm,
+                        character_name: characterName,
+                        target_average: targetAverage
+                    })
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    displayResults(data);
+                } else {
+                    showError(data.error || 'Произошла ошибка');
+                }
+            } catch (error) {
+                showError('Ошибка подключения к серверу: ' + error.message);
+            } finally {
+                hideLoading();
+                document.getElementById('analyzeBtn').disabled = false;
+            }
+        });
+
+        // Обработчик ввода для поиска сервера
+        document.getElementById('realm').addEventListener('input', function() {
+            const input = this.value.toLowerCase();
+            const suggestions = document.getElementById('realmSuggestions');
+
+            if (input.length === 0) {
+                suggestions.innerHTML = '';
+                suggestions.style.display = 'none';
+                return;
+            }
+
+            // Фильтруем серверы
+            filteredRealms = allRealms.filter(realm =>
+                realm.toLowerCase().includes(input)
+            ).slice(0, 10); // Ограничиваем 10 результатами
+
+            if (filteredRealms.length > 0) {
+                suggestions.innerHTML = filteredRealms.map(realm =>
+                    `<div class="suggestion-item" data-realm="${realm}">${realm}</div>`
+                ).join('');
+                suggestions.style.display = 'block';
+
+                // Добавляем обработчики кликов
+                document.querySelectorAll('.suggestion-item').forEach(item => {
+                    item.addEventListener('click', function() {
+                        document.getElementById('realm').value = this.getAttribute('data-realm');
+                        suggestions.style.display = 'none';
+                    });
+                });
+            } else {
+                suggestions.innerHTML = '<div class="suggestion-item no-results">Серверы не найдены</div>';
+                suggestions.style.display = 'block';
+            }
+        });
+
+        // Скрыть подсказки при клике вне поля
+        document.addEventListener('click', function(e) {
+            if (!e.target.closest('#realm') && !e.target.closest('#realmSuggestions')) {
+                document.getElementById('realmSuggestions').style.display = 'none';
+            }
+        });
+
+        function showLoading(message) {
+            document.getElementById('loadingDetails').textContent = message;
+            document.getElementById('loading').style.display = 'block';
+        }
+
+        function hideLoading() {
+            document.getElementById('loading').style.display = 'none';
+        }
+
+        function displayResults(data) {
+            const resultsSection = document.getElementById('resultsSection');
+            const characterInfo = document.getElementById('characterInfo');
+            const resultMessage = document.getElementById('resultMessage');
+            const summaryCards = document.getElementById('summaryCards');
+            const resourcesInfo = document.getElementById('resourcesInfo');
+            const currentItems = document.getElementById('currentItems');
+            const finalItemsSection = document.getElementById('finalItemsSection');
+            const finalItems = document.getElementById('finalItems');
+            const craftedSummary = document.getElementById('craftedSummary');
+            const craftedItemsList = document.getElementById('craftedItemsList');
+            const upgradesList = document.getElementById('upgradesList');
+            const additionalInfo = document.getElementById('additionalInfo');
+
+            // Показываем информацию о персонаже
+            if (data.character) {
+                characterInfo.innerHTML = `
+                    <h3>Персонаж: ${data.character.name}</h3>
+                    <p>Сервер: ${data.character.realm} (${data.character.region})</p>
+                `;
+                characterInfo.style.display = 'block';
+            }
+
+            // Показываем текущую экипировку
+            if (data.current_items && data.current_items.length > 0) {
+                let itemsHTML = '<h3>Текущая экипировка:</h3>';
+                data.current_items.forEach(item => {
+                    itemsHTML += `
+                        <div class="item-card">
+                            <div class="item-header">
+                                <span class="item-icon">${item.slot_icon}</span>
+                                <span class="item-slot">${item.readable_slot}</span>
+                            </div>
+                            <div class="item-icon-container">
+                                <img src="${item.icon_url}" alt="${item.name}" class="item-icon-img" onerror="this.src='https://render.worldofwarcraft.com/eu/icons/56/inv_misc_questionmark.jpg'">
+                            </div>
+                            <div class="item-name">${item.name}</div>
+                            <div class="item-level">${item.item_level}</div>
+                        </div>
+                    `;
+                });
+                currentItems.innerHTML = itemsHTML;
+                document.getElementById('currentItemsSection').style.display = 'block';
+            }
+
+            // Показываем финальную экипировку
+            if (data.final_items && data.final_items.length > 0) {
+                let finalItemsHTML = '';
+                data.final_items.forEach(item => {
+                    const craftedLabel = item.crafted ? '<div class="crafted-label">ИЗГОТОВЛЕН</div>' : '';
+                    finalItemsHTML += `
+                        <div class="item-card ${item.crafted ? 'crafted-item' : ''}">
+                            <div class="item-header">
+                                <span class="item-icon">${item.slot_icon}</span>
+                                <span class="item-slot">${item.readable_slot}</span>
+                            </div>
+                            <div class="item-icon-container">
+                                <img src="${item.icon_url}" alt="${item.name}" class="item-icon-img" onerror="this.src='https://render.worldofwarcraft.com/eu/icons/56/inv_misc_questionmark.jpg'">
+                                ${craftedLabel}
+                            </div>
+                            <div class="item-name">${item.name}</div>
+                            <div class="item-level">${item.item_level}</div>
+                        </div>
+                    `;
+                });
+                finalItems.innerHTML = finalItemsHTML;
+                finalItemsSection.style.display = 'block';
+            }
+
+            // Показываем сводку по изготовленным предметам
+            if (data.crafted_items_log && data.crafted_items_log.length > 0) {
+                let craftedHTML = '<div class="crafted-items-grid">';
+                data.crafted_items_log.forEach((item, index) => {
+                    craftedHTML += `
+                        <div class="crafted-item-card">
+                            <div class="crafted-item-header">
+                                <span class="crafted-item-icon">${item.item_slot_icon}</span>
+                                <span class="crafted-item-slot">${item.item_slot}</span>
+                            </div>
+                            <div class="crafted-item-icon-container">
+                                <img src="${item.item_icon_url}" alt="${item.item_name}" class="crafted-item-icon-img" onerror="this.src='https://render.worldofwarcraft.com/eu/icons/56/inv_misc_questionmark.jpg'">
+                            </div>
+                            <div class="crafted-item-name">${item.item_name}</div>
+                            <div class="crafted-item-change">${item.from} → ${item.to}</div>
+                            <div class="crafted-item-cost">${item.cost_formatted}</div>
+                        </div>
+                    `;
+                });
+                craftedHTML += '</div>';
+                craftedItemsList.innerHTML = craftedHTML;
+                craftedSummary.style.display = 'block';
+            } else {
+                craftedSummary.style.display = 'none';
+            }
+
+            // Показываем сообщение
+            if (data.message) {
+                const messageType = data.goal_reached ? 'success' : (data.message.includes('достигнуто') ? 'success' : 'warning');
+                resultMessage.innerHTML = `<div class="${messageType}">${data.message}</div>`;
+            } else if (data.goal_reached) {
+                resultMessage.innerHTML = `<div class="success">✅ Цель достигнута!</div>`;
+            } else {
+                resultMessage.innerHTML = `<div class="warning">⚠️ ${data.message || 'Цель не достигнута. Максимальное достижимое среднее: ' + data.final_average}</div>`;
+            }
+
+            // Карточки с основной информацией
+            summaryCards.innerHTML = `
+                <div class="card">
+                    <h3>Текущее среднее</h3>
+                    <div class="value">${data.current_average}</div>
+                </div>
+                <div class="card">
+                    <h3>Целевое среднее</h3>
+                    <div class="value">${data.target_average}</div>
+                </div>
+                <div class="card">
+                    <h3>Итоговое среднее</h3>
+                    <div class="value">${data.final_average}</div>
+                </div>
+                <div class="card resources-card">
+                    <h3>Всего ресурсов</h3>
+                    <div class="value">${data.total_resources_cost}</div>
+                </div>
+                <div class="card">
+                    <h3>Улучшения</h3>
+                    <div class="value">${data.upgrades_count}</div>
+                </div>
+                <div class="card crafted-card">
+                    <h3>Изготовлено</h3>
+                    <div class="value">${data.crafted_items}</div>
+                </div>
+            `;
+
+            // Информация о ресурсах
+            if (data.resources_needed) {
+                resourcesInfo.innerHTML = `
+                    <h3>Необходимые ресурсы:</h3>
+                    <div class="resource-item">
+                        <span class="resource-name">Ресурс №1:</span>
+                        <span class="resource-cost">${data.resources_needed.resource1}</span>
+                    </div>
+                    <div class="resource-item">
+                        <span class="resource-name">Ресурс №2:</span>
+                        <span class="resource-cost">${data.resources_needed.resource2}</span>
+                    </div>
+                    <div class="resource-item">
+                        <span class="resource-name">Ресурс №3:</span>
+                        <span class="resource-cost">${data.resources_needed.resource3}</span>
+                    </div>
+                    <div class="resource-item" style="border-top: 2px solid #3498db; margin-top: 8px; padding-top: 8px;">
+                        <span class="resource-name"><strong>Всего:</strong></span>
+                        <span class="resource-cost"><strong>${data.total_resources_cost}</strong></span>
+                    </div>
+                `;
+                resourcesInfo.style.display = 'block';
+            }
+
+            // Дополнительная информация
+            if (data.processing_time) {
+                additionalInfo.innerHTML = `
+                    <div class="stat-item">
+                        <div class="stat-label">Время обработки</div>
+                        <div class="stat-value">${data.processing_time} сек</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">Эффективность</div>
+                        <div class="stat-value">${data.efficiency} п/1000р</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">Изготовлено</div>
+                        <div class="stat-value">${data.crafted_items}/${9}</div>
+                    </div>
+                `;
+                additionalInfo.style.display = 'grid';
+            }
+
+            // Список улучшений с иконками
+            if (data.upgrades && data.upgrades.length > 0) {
+                let upgradesHTML = '<h3>Пошаговый план улучшений:</h3>';
+                data.upgrades.forEach(upgrade => {
+                    const isCrafted = upgrade.type === 'crafted';
+                    const typeClass = isCrafted ? 'crafted' : '';
+                    const typeText = isCrafted ? 'Изготовление' : 'Улучшение';
+
+                    upgradesHTML += `
+                        <div class="upgrade-item ${isCrafted ? 'crafted' : ''}">
+                            <div class="upgrade-icon">${upgrade.item_slot_icon}</div>
+                            <div class="upgrade-content">
+                                <div class="upgrade-header">
+                                    <span>Шаг ${upgrade.step}: ${upgrade.item_slot}</span>
+                                    <span class="upgrade-type ${typeClass}">${typeText}</span>
+                                </div>
+                                <div class="upgrade-item-details">
+                                    <img src="${upgrade.item_icon_url}" alt="${upgrade.item_name}" class="upgrade-item-icon" onerror="this.src='https://render.worldofwarcraft.com/eu/icons/56/inv_misc_questionmark.jpg'">
+                                    <div class="upgrade-item-info">
+                                        <div class="upgrade-item-name">${upgrade.item_name}</div>
+                                        <div class="upgrade-details">
+                                            ${upgrade.from} → ${upgrade.to} (${upgrade.cost_formatted})
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                });
+                upgradesList.innerHTML = upgradesHTML;
+            } else if (data.message && data.message.includes('достигнуто')) {
+                upgradesList.innerHTML = '<p>Улучшения не требуются - цель уже достигнута!</p>';
+            } else {
+                upgradesList.innerHTML = '<p>Улучшения не требуются или не возможны.</p>';
+            }
+
+            resultsSection.style.display = 'block';
+        }
+
+        function showError(message) {
+            const resultsSection = document.getElementById('resultsSection');
+            const resultMessage = document.getElementById('resultMessage');
+
+            resultMessage.innerHTML = `<div class="error">❌ ${message}</div>`;
+            document.getElementById('characterInfo').style.display = 'none';
+            document.getElementById('summaryCards').innerHTML = '';
+            document.getElementById('resourcesInfo').style.display = 'none';
+            document.getElementById('currentItemsSection').style.display = 'none';
+            document.getElementById('finalItemsSection').style.display = 'none';
+            document.getElementById('craftedSummary').style.display = 'none';
+            document.getElementById('upgradesList').innerHTML = '';
+            document.getElementById('additionalInfo').style.display = 'none';
+            resultsSection.style.display = 'block';
+        }
+    </script>
+</body>
+</html>
