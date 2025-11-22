@@ -51,12 +51,13 @@
                         <div class="form-group">
                             <label for="strategy">Стратегия оптимизации:</label>
                             <select id="strategy">
-                                <option value="balanced">Экономичная (минимум ресурсов)</option>
-                                <option value="cost_efficient">Тщательная (максимум ресурсов)</option>
-                                <option value="fastest">Быстрая (средний расход)</option>
+                                <option value="balanced">Сбалансированная</option>
+                                <option value="cost_efficient">Экономичная</option>
+                                <option value="fastest">Быстрая</option>
+                                <option value="level_priority">Приоритет уровней</option>
                             </select>
                             <div class="strategy-description" id="strategyDescription">
-                                Экономичная стратегия минимизирует затраты ресурсов для достижения цели.
+                                Сбалансированная стратегия обеспечивает оптимальный баланс между затратами и эффективностью.
                             </div>
                         </div>
                     </div>
@@ -82,6 +83,12 @@
                                     Исключить аксессуары из изготовления
                                 </label>
                             </div>
+                            <div class="form-group">
+                                <label>
+                                    <input type="checkbox" id="show_alternatives">
+                                    Показывать альтернативные источники предметов
+                                </label>
+                            </div>
                         </div>
                     </div>
 
@@ -102,12 +109,19 @@
                         <button id="compareStrategiesBtn" class="btn-secondary">Сравнить стратегии</button>
                         <button id="exportJsonBtn" class="btn-secondary">Экспорт JSON</button>
                         <button id="saveProfileBtn" class="btn-secondary">Сохранить профиль</button>
+                        <button id="showHistoryBtn" class="btn-secondary">История</button>
                     </div>
                 </div>
 
                 <div id="resultMessage"></div>
                 <div id="summaryCards" class="summary-cards"></div>
                 <div id="resourcesInfo" class="resources-info" style="display: none;"></div>
+
+                <!-- Информация о классе и специализации -->
+                <div id="classInfo" class="class-info" style="display: none;">
+                    <h3>Информация о классе:</h3>
+                    <div id="classDetails"></div>
+                </div>
 
                 <!-- Текущая экипировка -->
                 <div id="currentItemsSection">
@@ -178,6 +192,19 @@
                     </div>
                 </div>
             </div>
+
+            <!-- Модальное окно истории -->
+            <div id="historyModal" class="modal" style="display: none;">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h2>История оптимизаций</h2>
+                        <span class="close" id="closeHistory">&times;</span>
+                    </div>
+                    <div class="modal-body" id="historyContent">
+                        <div class="loading-spinner">Загрузка истории...</div>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -186,12 +213,14 @@
         let allRealms = [];
         let filteredRealms = [];
         let currentResults = null;
+        let characterClassData = {};
 
         // Описания стратегий
         const strategyDescriptions = {
-            'balanced': 'Экономичная стратегия минимизирует затраты ресурсов для достижения цели.',
-            'cost_efficient': 'Тщательная стратегия использует больше ресурсов, но обеспечивает более точное достижение цели.',
-            'fastest': 'Быстрая стратегия обеспечивает средний баланс между затратами и скоростью.'
+            'balanced': 'Сбалансированная стратегия обеспечивает оптимальный баланс между затратами и эффективностью.',
+            'cost_efficient': 'Экономичная стратегия минимизирует затраты ресурсов для достижения цели.',
+            'fastest': 'Быстрая стратегия обеспечивает средний баланс между затратами и скоростью.',
+            'level_priority': 'Стратегия приоритета уровней сначала улучшает самые низкоуровневые предметы.'
         };
 
         // Обновляем описание стратегии при изменении выбора
@@ -205,6 +234,7 @@
 
             // Загружаем список серверов
             loadRealms();
+            loadCharacterClasses();
 
             // Настройка обработчиков событий
             setupEventListeners();
@@ -236,6 +266,9 @@
             // Кнопка сохранения профиля
             document.getElementById('saveProfileBtn').addEventListener('click', openSaveProfileModal);
 
+            // Кнопка истории
+            document.getElementById('showHistoryBtn').addEventListener('click', showHistory);
+
             // Модальные окна
             document.getElementById('closeStrategyComparison').addEventListener('click', function() {
                 document.getElementById('strategyComparisonModal').style.display = 'none';
@@ -245,18 +278,26 @@
                 document.getElementById('saveProfileModal').style.display = 'none';
             });
 
+            document.getElementById('closeHistory').addEventListener('click', function() {
+                document.getElementById('historyModal').style.display = 'none';
+            });
+
             document.getElementById('confirmSaveProfile').addEventListener('click', saveProfile);
 
             // Закрытие модальных окон при клике вне их
             window.addEventListener('click', function(event) {
                 const strategyModal = document.getElementById('strategyComparisonModal');
                 const saveModal = document.getElementById('saveProfileModal');
+                const historyModal = document.getElementById('historyModal');
 
                 if (event.target === strategyModal) {
                     strategyModal.style.display = 'none';
                 }
                 if (event.target === saveModal) {
                     saveModal.style.display = 'none';
+                }
+                if (event.target === historyModal) {
+                    historyModal.style.display = 'none';
                 }
             });
         }
@@ -321,10 +362,22 @@
 
                 allRealms = data.realms;
                 filteredRealms = [...allRealms];
+                characterClassData = data.character_classes || {};
 
                 console.log(`Загружено ${data.realms.length} серверов`);
             } catch (error) {
                 console.error('Не удалось загрузить список серверов:', error);
+            }
+        }
+
+        // Загружаем данные о классах
+        async function loadCharacterClasses() {
+            try {
+                const response = await fetch('/api/realms');
+                const data = await response.json();
+                characterClassData = data.character_classes || {};
+            } catch (error) {
+                console.error('Не удалось загрузить данные о классах:', error);
             }
         }
 
@@ -337,9 +390,10 @@
             const characterName = document.getElementById('character_name').value.trim();
             const targetAverage = parseFloat(document.getElementById('target_average').value);
             const strategy = document.getElementById('strategy').value;
-            const maxCraftedItems = parseInt(document.getElementById('max_crafted_items').value);
+            const maxCraftedItems = parseInt(document.getElementById('max_crafted_items').value) || 9;
             const budgetLimit = document.getElementById('budget_limit').value ? parseInt(document.getElementById('budget_limit').value) : null;
             const excludeTrinkets = document.getElementById('exclude_trinkets').checked;
+            const showAlternatives = document.getElementById('show_alternatives').checked;
 
             // Валидация
             if (!realm) {
@@ -363,6 +417,18 @@
                 return;
             }
 
+            // Проверяем максимальное количество изготавливаемых предметов
+            if (maxCraftedItems < 0 || maxCraftedItems > 9) {
+                showError('Максимум изготавливаемых предметов должен быть от 0 до 9');
+                return;
+            }
+
+            // Проверяем лимит бюджета
+            if (budgetLimit !== null && budgetLimit < 0) {
+                showError('Лимит бюджета должен быть положительным числом');
+                return;
+            }
+
             // Показываем загрузку
             showLoading(`Анализ персонажа ${characterName}@${realm}...`);
             document.getElementById('resultsSection').style.display = 'none';
@@ -382,7 +448,8 @@
                         strategy: strategy,
                         max_crafted_items: maxCraftedItems,
                         budget_limit: budgetLimit,
-                        exclude_trinkets: excludeTrinkets
+                        exclude_trinkets: excludeTrinkets,
+                        show_alternatives: showAlternatives
                     })
                 });
 
@@ -496,15 +563,33 @@
             const additionalInfo = document.getElementById('additionalInfo');
             const recommendationsSection = document.getElementById('recommendationsSection');
             const recommendationsList = document.getElementById('recommendationsList');
+            const classInfo = document.getElementById('classInfo');
+            const classDetails = document.getElementById('classDetails');
 
             // Показываем информацию о персонаже
             if (data.character) {
-                characterInfo.innerHTML = `
+                let characterHTML = `
                     <h3>Персонаж: ${data.character.name}</h3>
                     <p>Сервер: ${data.character.realm} (${data.character.region})</p>
                     <p>Стратегия: ${data.strategy_name}</p>
                 `;
+
+                // Добавляем информацию о классе и специализации
+                if (data.character.class) {
+                    characterHTML += `<p>Класс: ${data.character.class}`;
+                    if (data.character.active_spec_name) {
+                        characterHTML += ` - ${data.character.active_spec_name}`;
+                    }
+                    characterHTML += `</p>`;
+                }
+
+                characterInfo.innerHTML = characterHTML;
                 characterInfo.style.display = 'block';
+            }
+
+            // Показываем информацию о классе и специализации
+            if (data.character && data.character.class && data.character.active_spec_name) {
+                loadClassRecommendation(data.character.class, data.character.active_spec_name);
             }
 
             // Показываем текущую экипировку
@@ -736,6 +821,28 @@
             resultsSection.style.display = 'block';
         }
 
+        async function loadClassRecommendation(characterClass, specialization) {
+            try {
+                const response = await fetch(`/api/recommendations/class/${encodeURIComponent(characterClass)}/${encodeURIComponent(specialization)}`);
+                const data = await response.json();
+
+                if (response.ok && data.recommendation) {
+                    const classInfo = document.getElementById('classInfo');
+                    const classDetails = document.getElementById('classDetails');
+
+                    classDetails.innerHTML = `
+                        <div class="class-recommendation">
+                            <h4>${characterClass} - ${specialization}</h4>
+                            <p>${data.recommendation}</p>
+                        </div>
+                    `;
+                    classInfo.style.display = 'block';
+                }
+            } catch (error) {
+                console.error('Ошибка загрузки рекомендаций по классу:', error);
+            }
+        }
+
         function showError(message) {
             const resultsSection = document.getElementById('resultsSection');
             const resultMessage = document.getElementById('resultMessage');
@@ -896,6 +1003,73 @@
             } catch (error) {
                 alert('Ошибка подключения: ' + error.message);
             }
+        }
+
+        async function showHistory() {
+            const modal = document.getElementById('historyModal');
+            const content = document.getElementById('historyContent');
+
+            content.innerHTML = '<div class="loading-spinner">Загрузка истории...</div>';
+            modal.style.display = 'block';
+
+            try {
+                const response = await fetch('/api/history');
+                const data = await response.json();
+
+                if (response.ok) {
+                    renderHistory(data.history);
+                } else {
+                    content.innerHTML = `<div class="error">Ошибка: ${data.error}</div>`;
+                }
+            } catch (error) {
+                content.innerHTML = `<div class="error">Ошибка подключения: ${error.message}</div>`;
+            }
+        }
+
+        function renderHistory(history) {
+            const content = document.getElementById('historyContent');
+
+            if (!history || history.length === 0) {
+                content.innerHTML = '<p>История оптимизаций пуста</p>';
+                return;
+            }
+
+            let html = `
+                <div class="history-list">
+                    <h3>Последние оптимизации</h3>
+                    <table class="history-table">
+                        <thead>
+                            <tr>
+                                <th>Персонаж</th>
+                                <th>Цель</th>
+                                <th>Стратегия</th>
+                                <th>Ресурсы</th>
+                                <th>Дата</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+            `;
+
+            history.slice(0, 20).forEach(record => {
+                const date = new Date(record.created_at).toLocaleDateString('ru-RU');
+                html += `
+                    <tr>
+                        <td>${record.character_name}@${record.realm}</td>
+                        <td>${record.target_average} → ${record.final_average}</td>
+                        <td>${record.strategy}</td>
+                        <td>${record.total_resources}</td>
+                        <td>${date}</td>
+                    </tr>
+                `;
+            });
+
+            html += `
+                        </tbody>
+                    </table>
+                </div>
+            `;
+
+            content.innerHTML = html;
         }
     </script>
 </body>
