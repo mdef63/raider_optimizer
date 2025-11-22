@@ -5,6 +5,42 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Оптимизатор Улучшений Raider.IO</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <style>
+        /* Добавляем стили для сложности предметов */
+        .item-difficulty {
+            font-size: 0.7em;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-weight: bold;
+            margin-top: 4px;
+            display: inline-block;
+            text-transform: uppercase;
+        }
+
+        .difficulty-mythic {
+            background: linear-gradient(135deg, #ff8000, #ff4500);
+            color: white;
+            border: 1px solid #cc6600;
+        }
+
+        .difficulty-heroic {
+            background: linear-gradient(135deg, #0070dd, #0055aa);
+            color: white;
+            border: 1px solid #0055aa;
+        }
+
+        .difficulty-normal {
+            background: linear-gradient(135deg, #1eff00, #00cc00);
+            color: black;
+            border: 1px solid #00aa00;
+        }
+
+        .difficulty-unknown {
+            background: linear-gradient(135deg, #666666, #444444);
+            color: white;
+            border: 1px solid #333333;
+        }
+    </style>
 </head>
 <body>
     <div class="container">
@@ -222,6 +258,34 @@
             document.getElementById('loading').style.display = 'none';
         }
 
+        // Функция для получения класса сложности
+        function getDifficultyClass(difficulty) {
+            switch(difficulty?.toLowerCase()) {
+                case 'mythic':
+                    return 'difficulty-mythic';
+                case 'heroic':
+                    return 'difficulty-heroic';
+                case 'normal':
+                    return 'difficulty-normal';
+                default:
+                    return 'difficulty-unknown';
+            }
+        }
+
+        // Функция для получения текста сложности
+        function getDifficultyText(difficulty) {
+            switch(difficulty?.toLowerCase()) {
+                case 'mythic':
+                    return 'Mythic';
+                case 'heroic':
+                    return 'Heroic';
+                case 'normal':
+                    return 'Normal';
+                default:
+                    return '';
+            }
+        }
+
         function displayResults(data) {
             const resultsSection = document.getElementById('resultsSection');
             const characterInfo = document.getElementById('characterInfo');
@@ -249,6 +313,12 @@
             if (data.current_items && data.current_items.length > 0) {
                 let itemsHTML = '<h3>Текущая экипировка:</h3>';
                 data.current_items.forEach(item => {
+                    // Извлекаем информацию о сложности
+                    const difficulty = item.difficulty || '';
+                    const difficultyClass = getDifficultyClass(difficulty);
+                    const difficultyText = getDifficultyText(difficulty);
+                    const difficultyDisplay = difficultyText ? `<div class="item-difficulty ${difficultyClass}">${difficultyText}</div>` : '';
+
                     itemsHTML += `
                         <div class="item-card">
                             <div class="item-header">
@@ -260,6 +330,7 @@
                             </div>
                             <div class="item-name">${item.name}</div>
                             <div class="item-level">${item.item_level}</div>
+                            ${difficultyDisplay}
                         </div>
                     `;
                 });
@@ -272,6 +343,13 @@
                 let finalItemsHTML = '';
                 data.final_items.forEach(item => {
                     const craftedLabel = item.crafted ? '<div class="crafted-label">ИЗГОТОВЛЕН</div>' : '';
+
+                    // Извлекаем информацию о сложности
+                    const difficulty = item.difficulty || '';
+                    const difficultyClass = getDifficultyClass(difficulty);
+                    const difficultyText = getDifficultyText(difficulty);
+                    const difficultyDisplay = difficultyText ? `<div class="item-difficulty ${difficultyClass}">${difficultyText}</div>` : '';
+
                     finalItemsHTML += `
                         <div class="item-card ${item.crafted ? 'crafted-item' : ''}">
                             <div class="item-header">
@@ -284,6 +362,7 @@
                             </div>
                             <div class="item-name">${item.name}</div>
                             <div class="item-level">${item.item_level}</div>
+                            ${difficultyDisplay}
                         </div>
                     `;
                 });
