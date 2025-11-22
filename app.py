@@ -1,14 +1,18 @@
 """
 Raider.IO Optimizer - Веб-приложение для оптимизации улучшений предметов WoW
+Улучшенная версия с профилями, стратегиями и расширенной функциональностью
 """
 
 import logging
 import os
+import json
+import hashlib
 from datetime import datetime
 from functools import wraps
 from typing import Dict, List, Optional, Tuple
+from collections import defaultdict
 
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, Response
 from flask_cors import CORS
 import requests
 import urllib.parse
@@ -29,27 +33,27 @@ app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY') or 'dev-secret-key-for-r
 app.config['JSON_SORT_KEYS'] = False
 
 # ====================================================================================
-# КОНСТАНТЫ
+# КОНСТАНТЫ И СТРАТЕГИИ
 # ====================================================================================
 
 # Информация о слотах экипировки с иконками (только нужные слоты)
 SLOT_INFO = {
-    'head': {'name': 'Голова (шлем)', 'icon': '🛡️'},
-    'neck': {'name': 'Шея (амулет)', 'icon': '📿'},
-    'shoulder': {'name': 'Плечи', 'icon': '👕'},
-    'back': {'name': 'Спина (плащ)', 'icon': '游戏当中'},
-    'chest': {'name': 'Грудь', 'icon': '🦺'},
-    'wrist': {'name': 'Запястья (браслеты)', 'icon': '🔗'},
-    'hands': {'name': 'Кисти рук (перчатки)', 'icon': '🧤'},
-    'waist': {'name': 'Пояс', 'icon': '🥋'},
-    'legs': {'name': 'Ноги (поножи)', 'icon': '🦵'},
-    'feet': {'name': 'Ступни (обувь)', 'icon': '👟'},
-    'finger1': {'name': 'Палец 1 (кольцо)', 'icon': '💍'},
-    'finger2': {'name': 'Палец 2 (кольцо)', 'icon': '💍'},
-    'trinket1': {'name': 'Аксессуар 1', 'icon': '💎'},
-    'trinket2': {'name': 'Аксессуар 2', 'icon': '💎'},
-    'mainhand': {'name': 'Основная рука (оружие)', 'icon': '⚔️'},
-    'offhand': {'name': 'Вторая рука (щит/оружие)', 'icon': '🛡️'}
+    'head': {'name': 'Голова (шлем)', 'icon': '[H]'},
+    'neck': {'name': 'Шея (амулет)', 'icon': '[N]'},
+    'shoulder': {'name': 'Плечи', 'icon': '[S]'},
+    'back': {'name': 'Спина (плащ)', 'icon': '[B]'},
+    'chest': {'name': 'Грудь', 'icon': '[C]'},
+    'wrist': {'name': 'Запястья (браслеты)', 'icon': '[W]'},
+    'hands': {'name': 'Кисти рук (перчатки)', 'icon': '[G]'},
+    'waist': {'name': 'Пояс', 'icon': '[P]'},
+    'legs': {'name': 'Ноги (поножи)', 'icon': '[L]'},
+    'feet': {'name': 'Ступни (обувь)', 'icon': '[F]'},
+    'finger1': {'name': 'Палец 1 (кольцо)', 'icon': '[R1]'},
+    'finger2': {'name': 'Палец 2 (кольцо)', 'icon': '[R2]'},
+    'trinket1': {'name': 'Аксессуар 1', 'icon': '[T1]'},
+    'trinket2': {'name': 'Аксессуар 2', 'icon': '[T2]'},
+    'mainhand': {'name': 'Основная рука (оружие)', 'icon': '[MH]'},
+    'offhand': {'name': 'Вторая рука (щит/оружие)', 'icon': '[OH]'}
 }
 
 # Слоты, которые НЕЛЬЗЯ изготавливать (аксессуары)
@@ -70,6 +74,33 @@ MAX_LEVEL_BY_DIFFICULTY = {
     "Normal": 704,
     "Heroic": 717,
     "Mythic": 730
+}
+
+# Стратегии оптимизации
+OPTIMIZATION_STRATEGIES = {
+    "cost_efficient": {
+        "name": "Экономичная",
+        "description": "Минимум ресурсов за максимальный прирост",
+        "priority": "efficiency"
+    },
+    "fastest": {
+        "name": "Быстрая",
+        "description": "Быстрое достижение цели (даже за больше ресурсов)",
+        "priority": "speed"
+    },
+    "balanced": {
+        "name": "Сбалансированная",
+        "description": "Оптимальный баланс скорости и стоимости",
+        "priority": "balanced"
+    }
+}
+
+# Альтернативные источники предметов
+ALTERNATIVE_SOURCES = {
+    "mythic_plus": "Mythic+",
+    "raid_drops": "Рейдовые луты",
+    "world_quests": "Задания мира",
+    "vendor": "Продавцы"
 }
 
 # Стоимость улучшений (ресурсы)
@@ -120,6 +151,13 @@ SPECIAL_ITEMS = [
     "Rune-Branded Waistband",
     "Everforged Warglaive"
 ]
+
+# Предметы, доступные через Mythic+
+MYTHIC_PLUS_ITEMS = {
+    "Charhound's Vicious Hornguards",
+    "Mawsworn Soulkeeper",
+    "Reinforced Soulsteel Sabatons"
+}
 
 # Максимальное количество изготавливаемых предметов
 MAX_CRAFTED_ITEMS = 9
@@ -174,6 +212,9 @@ REGIONS_LOCALIZED = {
 
 # Базовый URL для иконок Raider.IO
 RAIDER_IO_ICON_BASE = "https://render.worldofwarcraft.com/eu/icons/56"
+
+# Хранилище профилей (в реальном приложении использовать БД)
+profiles_storage = {}
 
 # ====================================================================================
 # УТИЛИТЫ
@@ -296,12 +337,125 @@ def format_resources(resources: Tuple[int, int, int]) -> str:
     r1, r2, r3 = resources
     parts = []
     if r1 > 0:
-        parts.append(f"Ресурс №1: {r1}")
+        parts.append(f"Ресурс 1: {r1}")
     if r2 > 0:
-        parts.append(f"Ресурс №2: {r2}")
+        parts.append(f"Ресурс 2: {r2}")
     if r3 > 0:
-        parts.append(f"Ресурс №3: {r3}")
+        parts.append(f"Ресурс 3: {r3}")
     return ", ".join(parts) if parts else "Бесплатно"
+
+def get_cache_key(region, realm, name, target_average, strategy="balanced"):
+    """Генерирует ключ кэша"""
+    key_string = f"{region}_{realm}_{name}_{target_average}_{strategy}"
+    return hashlib.md5(key_string.encode()).hexdigest()
+
+def get_item_color(item_level: int) -> str:
+    """Возвращает цвет для визуализации уровня предмета"""
+    if item_level >= 727:
+        return "#FF8C00"  # Оранжевый
+    elif item_level >= 717:
+        return "#0070DD"  # Синий
+    elif item_level >= 704:
+        return "#1EFF00"  # Зеленый
+    elif item_level >= 680:
+        return "#FFFFFF"  # Белый
+    else:
+        return "#9D9D9D"  # Серый
+
+def evaluate_alternative_methods(item_name: str, current_level: int) -> List[Dict]:
+    """Оценивает альтернативные способы получения предметов"""
+    alternatives = []
+
+    # Проверяем, можно ли получить предмет через другие источники
+    if item_name in MYTHIC_PLUS_ITEMS:
+        alternatives.append({
+            "method": "Mythic+",
+            "estimated_level": 720,
+            "cost": "Еженедельный ключ",
+            "time_required": "2-4 часа"
+        })
+
+    # Добавляем общие альтернативы
+    alternatives.append({
+        "method": "Рейдовые луты",
+        "estimated_level": current_level + 10,
+        "cost": "Время/золото",
+        "time_required": "Случайно"
+    })
+
+    return alternatives
+
+def get_priority_items_for_upgrade(items: List[Dict], target_average: float, current_average: float) -> List[Tuple]:
+    """Определяет приоритетные предметы для улучшения"""
+    item_priorities = []
+
+    for i, item in enumerate(items):
+        # Приоритет основан на:
+        # 1. Насколько предмет отстает от среднего
+        # 2. Потенциальный прирост к среднему
+        # 3. Сложность предмета
+
+        gap_from_avg = current_average - item['item_level']
+        potential_gain = min(727, get_max_level_for_difficulty(item['difficulty'])) - item['item_level']
+
+        # Предметы, которые сильно отстают, получают высокий приоритет
+        priority = gap_from_avg * 2 + potential_gain
+
+        # Специальные предметы получают бонусный приоритет
+        if item['is_special']:
+            priority += 50
+
+        item_priorities.append((i, priority, item))
+
+    # Сортируем по убыванию приоритета
+    item_priorities.sort(key=lambda x: x[1], reverse=True)
+    return item_priorities
+
+def generate_recommendations(items: List[Dict], target_average: float, crafted_slots: set, crafted_items_count: int) -> List[Dict]:
+    """Генерирует рекомендации по оптимизации"""
+    recommendations = []
+
+    # Рекомендации по предметам
+    low_items = [item for item in items if item['item_level'] < (target_average - 20)]
+    if low_items:
+        recommendations.append({
+            "type": "priority_upgrade",
+            "message": f"Сначала улучшите {len(low_items)} предметов с низким уровнем",
+            "items": [item['name'] for item in low_items[:3]]  # Показываем первые 3
+        })
+
+    # Рекомендации по слотам
+    craftable_slots = [item for item in items
+                      if item['slot'] not in NON_CRAFTABLE_SLOTS
+                      and item['slot'] not in crafted_slots]
+
+    if len(craftable_slots) > 0 and crafted_items_count < MAX_CRAFTED_ITEMS:
+        recommendations.append({
+            "type": "crafting_opportunity",
+            "message": f"Рассмотрите изготовление предметов в {min(len(craftable_slots), MAX_CRAFTED_ITEMS - crafted_items_count)} слотах",
+            "slots": [item['slot'] for item in craftable_slots[:3]]
+        })
+
+    return recommendations
+
+def compare_strategies(items: List[Dict], target_average: float) -> Dict:
+    """Сравнивает разные стратегии оптимизации"""
+    strategies = ["cost_efficient", "fastest", "balanced"]
+    comparison = {}
+
+    for strategy in strategies:
+        optimizer = UpgradeOptimizer(items.copy(), target_average, strategy)
+        result = optimizer.find_optimal_path()
+
+        comparison[strategy] = {
+            "total_cost": result["total_resources_cost"],
+            "steps": len(result["upgrades"]) + len(result["crafted_items_log"]),
+            "final_average": result["final_average"],
+            "crafted_items": result["crafted_items"],
+            "strategy_name": OPTIMIZATION_STRATEGIES[strategy]["name"]
+        }
+
+    return comparison
 
 # ====================================================================================
 # МОДЕЛИ
@@ -392,7 +546,8 @@ class CharacterData:
                         'icon_url': icon_url,
                         'crafted': False,  # По умолчанию предмет не изготовлен
                         'difficulty': difficulty,  # Добавляем информацию о сложности
-                        'is_special': any(special_item in item_data.get('name', '') for special_item in SPECIAL_ITEMS)
+                        'is_special': any(special_item in item_data.get('name', '') for special_item in SPECIAL_ITEMS),
+                        'alternatives': evaluate_alternative_methods(item_data.get('name', ''), item_data['item_level'])
                     })
 
         # Сортируем по заданному порядку слотов
@@ -404,13 +559,15 @@ class CharacterData:
 class UpgradeOptimizer:
     """Класс для оптимизации улучшений предметов"""
 
-    def __init__(self, items: List[Dict], target_average: float):
+    def __init__(self, items: List[Dict], target_average: float, strategy: str = "balanced"):
         self.items = items
         self.target_average = target_average
+        self.strategy = strategy
         self.current_average = sum(item['item_level'] for item in items) / len(items) if items else 0
         self.crafted_items_count = 0  # Счетчик изготавливаемых предметов
         self.crafted_items_log = []    # Лог изготовленных предметов
         self.crafted_slots = set()     # Отслеживаем уже использованные слоты для изготовления
+        self.step_history = []         # История шагов для предотвращения зацикливания
 
     def can_craft_item(self, slot: str) -> bool:
         """Проверяет, можно ли изготовить предмет в данном слоте."""
@@ -428,9 +585,41 @@ class UpgradeOptimizer:
                 return level
         return None
 
+    def calculate_strategy_priority(self, current_level: int, max_level_for_difficulty: int,
+                                  upgrade_cost: Tuple[int, int, int], craft_cost: Tuple[int, int, int]) -> str:
+        """Рассчитывает приоритет на основе выбранной стратегии"""
+        upgrade_total = sum(upgrade_cost)
+        craft_total = sum(craft_cost)
+
+        if self.strategy == "cost_efficient":
+            # Минимизация затрат
+            return "craft" if craft_total < upgrade_total else "upgrade"
+        elif self.strategy == "fastest":
+            # Максимизация скорости (изготовление быстрее)
+            return "craft"
+        else:  # balanced
+            # Баланс между стоимостью и эффективностью
+            gap_to_target = self.target_average - self.current_average
+            if gap_to_target > 10:  # Большая разница - предпочитаем изготовление
+                return "craft" if craft_total <= upgrade_total * 1.5 else "upgrade"
+            else:  # Маленькая разница - предпочитаем улучшение
+                return "upgrade" if upgrade_total <= craft_total * 1.2 else "craft"
+
+    def is_cycling_detected(self, item_slot: str, item_level: int) -> bool:
+        """Проверяет, не происходит ли зацикливание на предмете"""
+        # Проверяем последние 5 шагов
+        recent_steps = self.step_history[-5:] if len(self.step_history) >= 5 else self.step_history
+
+        # Считаем, сколько раз этот предмет обрабатывался в последних шагах
+        same_item_count = sum(1 for step in recent_steps
+                             if step['slot'] == item_slot and step['level'] == item_level)
+
+        # Если предмет обрабатывался 3 и более раз в последних 5 шагах - зацикливание
+        return same_item_count >= 3
+
     def find_optimal_path(self) -> Dict:
         """Находит оптимальный путь улучшений."""
-        logger.info(f"Начинаем оптимизацию. Текущее среднее: {self.current_average:.2f}, Цель: {self.target_average}")
+        logger.info(f"Начинаем оптимизацию. Текущее среднее: {self.current_average:.2f}, Цель: {self.target_average}, Стратегия: {self.strategy}")
 
         if self.current_average >= self.target_average:
             # Создаем копию предметов для финальной экипировки
@@ -443,7 +632,9 @@ class UpgradeOptimizer:
                 "crafted_items": 0,
                 "crafted_items_log": [],
                 "final_average": self.current_average,
-                "final_items": final_items
+                "final_items": final_items,
+                "strategy": self.strategy,
+                "strategy_name": OPTIMIZATION_STRATEGIES[self.strategy]["name"]
             }
 
         # Создаем копию предметов для симуляции улучшений
@@ -455,9 +646,13 @@ class UpgradeOptimizer:
         max_steps = 100
 
         while current_avg < self.target_average and step <= max_steps:
-            # Находим предмет с минимальным уровнем
-            min_item_idx = min(range(len(upgraded_items)),
-                             key=lambda i: upgraded_items[i]['item_level'])
+            # Используем улучшенный алгоритм выбора предметов
+            priority_items = get_priority_items_for_upgrade(upgraded_items, self.target_average, current_avg)
+
+            if not priority_items:
+                break
+
+            min_item_idx = priority_items[0][0]  # Берем индекс первого по приоритету предмета
 
             current_level = upgraded_items[min_item_idx]['item_level']
             item_slot = upgraded_items[min_item_idx]['slot']
@@ -465,20 +660,102 @@ class UpgradeOptimizer:
             item_difficulty = upgraded_items[min_item_idx]['difficulty']
             is_special = upgraded_items[min_item_idx]['is_special']
 
+            # СТРОГАЯ проверка: если предмет уже максимального уровня, пропускаем его сразу
+            if current_level >= 727:
+                logger.info(f"Предмет {item_name} уже имеет максимальный уровень {current_level}")
+                # Ищем следующий предмет, который можно улучшить
+                available_items = [
+                    (idx, priority, item) for idx, priority, item in priority_items[1:]
+                    if item['item_level'] < 727
+                    and item['slot'] not in self.crafted_slots
+                ]
+                if available_items:
+                    min_item_idx = available_items[0][0]
+                    current_level = upgraded_items[min_item_idx]['item_level']
+                    item_slot = upgraded_items[min_item_idx]['slot']
+                    item_name = upgraded_items[min_item_idx]['name']
+                    item_difficulty = upgraded_items[min_item_idx]['difficulty']
+                    is_special = upgraded_items[min_item_idx]['is_special']
+                else:
+                    # Если нет доступных предметов для улучшения, проверяем возможность изготовления
+                    logger.info("Все предметы имеют максимальный уровень")
+                    if self.crafted_items_count < MAX_CRAFTED_ITEMS:
+                        # Ищем предметы, которые можно изготовить (уже изготовленные пропускаем)
+                        craftable_items = [
+                            (i, item) for i, item in enumerate(upgraded_items)
+                            if item['slot'] not in NON_CRAFTABLE_SLOTS
+                            and item['slot'] not in self.crafted_slots
+                            and item['item_level'] < 727
+                        ]
+                        if craftable_items:
+                            # Сортируем по уровню (самые низкие первыми)
+                            craftable_items.sort(key=lambda x: x[1]['item_level'])
+                            min_item_idx = craftable_items[0][0]
+                            current_level = upgraded_items[min_item_idx]['item_level']
+                            item_slot = upgraded_items[min_item_idx]['slot']
+                            item_name = upgraded_items[min_item_idx]['name']
+                            is_special = upgraded_items[min_item_idx]['is_special']
+                        else:
+                            break
+                    else:
+                        break
+
+            # Проверка на зацикливание (только если предмет не максимального уровня)
+            if current_level < 727 and self.is_cycling_detected(item_slot, current_level):
+                logger.info(f"Обнаружено зацикливание на предмете {item_name} {current_level}")
+                # Принудительно переходим к следующему предмету в списке приоритетов
+                next_items = [
+                    item for item in priority_items[1:]
+                    if not self.is_cycling_detected(item[2]['slot'], item[2]['item_level'])
+                    and item[2]['item_level'] < 727
+                ]
+                if next_items:
+                    min_item_idx = next_items[0][0]
+                    current_level = upgraded_items[min_item_idx]['item_level']
+                    item_slot = upgraded_items[min_item_idx]['slot']
+                    item_name = upgraded_items[min_item_idx]['name']
+                    item_difficulty = upgraded_items[min_item_idx]['difficulty']
+                    is_special = upgraded_items[min_item_idx]['is_special']
+                else:
+                    # Если все предметы в цикле, проверяем возможность изготовления
+                    if self.can_craft_item(item_slot) and current_level < 727:
+                        pass  # Продолжаем с изготовлением
+                    else:
+                        logger.info("Все предметы в цикле или максимального уровня, прекращаем обработку")
+                        break
+
+            # Добавляем шаг в историю (только если предмет не максимального уровня)
+            if current_level < 727:
+                self.step_history.append({
+                    'slot': item_slot,
+                    'level': current_level,
+                    'name': item_name,
+                    'step': step
+                })
+
             # Получаем максимальный уровень для этой сложности (для улучшения)
             max_level_for_difficulty = get_max_level_for_difficulty(item_difficulty)
 
             # Проверяем, достиг ли предмет максимального уровня для своей сложности
-            if current_level >= max_level_for_difficulty:
+            if current_level >= max_level_for_difficulty and current_level < 727:
                 logger.info(f"Предмет {item_name} достиг максимального уровня {max_level_for_difficulty} для сложности {item_difficulty}")
-                # Ищем другой предмет для улучшения
+                # Ищем другой предмет для улучшения из приоритетного списка
                 available_items = [
-                    (i, item) for i, item in enumerate(upgraded_items)
-                    if item['item_level'] < get_max_level_for_difficulty(item['difficulty'])
+                    (idx, priority, item) for idx, priority, item in priority_items
+                    if (item['item_level'] < get_max_level_for_difficulty(item['difficulty']) or item['item_level'] < 727)
                     and item['slot'] not in self.crafted_slots  # Исключаем уже использованные слоты
+                    and item['item_level'] < 727  # Исключаем уже максимальные
                 ]
                 if available_items:
-                    min_item_idx = min(available_items, key=lambda x: x[1]['item_level'])[0]
+                    # Проверяем на зацикливание
+                    valid_items = [
+                        item for item in available_items
+                        if not self.is_cycling_detected(item[2]['slot'], item[2]['item_level'])
+                    ]
+                    if valid_items:
+                        min_item_idx = valid_items[0][0]  # Берем самый приоритетный незацикленный
+                    else:
+                        min_item_idx = available_items[0][0]  # Берем первый доступный
                     current_level = upgraded_items[min_item_idx]['item_level']
                     item_slot = upgraded_items[min_item_idx]['slot']
                     item_name = upgraded_items[min_item_idx]['name']
@@ -497,7 +774,9 @@ class UpgradeOptimizer:
                             and item['item_level'] < 727  # Можно улучшить до 727
                         ]
                         if craftable_items:
-                            min_item_idx = min(craftable_items, key=lambda x: x[1]['item_level'])[0]
+                            # Сортируем по уровню (самые низкие первыми)
+                            craftable_items.sort(key=lambda x: x[1]['item_level'])
+                            min_item_idx = craftable_items[0][0]
                             current_level = upgraded_items[min_item_idx]['item_level']
                             item_slot = upgraded_items[min_item_idx]['slot']
                             item_name = upgraded_items[min_item_idx]['name']
@@ -522,18 +801,16 @@ class UpgradeOptimizer:
                 # Рассчитываем стоимость улучшения до максимального уровня
                 if can_upgrade_to_max:
                     upgrade_cost_to_max = get_upgrade_cost(current_level, max_upgrade_level)
-                    upgrade_total_cost = sum(upgrade_cost_to_max)
                 else:
-                    upgrade_total_cost = float('inf')  # Невозможно улучшить
+                    upgrade_cost_to_max = (0, 0, 0)
 
-                craft_total_cost = sum(craft_cost)
+                # Принимаем решение на основе стратегии
+                decision = self.calculate_strategy_priority(
+                    current_level, max_level_for_difficulty,
+                    upgrade_cost_to_max, craft_cost
+                )
 
-                # Принимаем решение: улучшать или изготавливать
-                # Изготавливаем до 727, если:
-                # 1. Стоимость изготовления выгоднее улучшения до максимума
-                # 2. Или предмет уже максимально улучшен для своей сложности
-                # 3. Или цель еще не достигнута
-                if not can_upgrade_to_max or craft_total_cost <= upgrade_total_cost or current_avg < self.target_average:
+                if decision == "craft" or not can_upgrade_to_max or current_level >= max_level_for_difficulty:
                     # Изготовление предмета до 727
                     self.crafted_items_count += 1
                     self.crafted_slots.add(item_slot)  # Отмечаем слот как использованный
@@ -571,27 +848,29 @@ class UpgradeOptimizer:
                     continue
 
             # Обычное улучшение (если цель еще не достигнута)
-            if current_avg < self.target_average:
+            if current_avg < self.target_average and current_level < 727:
                 next_level = self.get_next_upgrade_level(current_level, item_difficulty)
 
                 # Для специальных предметов ограничиваем уровень 727
                 if is_special and next_level and next_level > 727:
                     next_level = 727 if current_level < 727 else None
 
-                # Ограничиваем уровнем сложности
+                # Ограничиваем уровнем сложности, но разрешаем до 727
                 if next_level and next_level > max_level_for_difficulty:
-                    next_level = None
+                    next_level = min(next_level, 727)
 
-                if next_level is None:
+                if next_level is None or next_level <= current_level:
                     logger.info(f"Предмет {item_name} не может быть улучшен дальше")
                     # Ищем другой предмет для улучшения
                     available_items = [
-                        (i, item) for i, item in enumerate(upgraded_items)
-                        if item['item_level'] < get_max_level_for_difficulty(item['difficulty'])
+                        (idx, priority, item) for idx, priority, item in priority_items
+                        if item['item_level'] < min(get_max_level_for_difficulty(item['difficulty']), 727)
                         and item['slot'] not in self.crafted_slots  # Исключаем уже использованные слоты
+                        and item['item_level'] < 727
+                        and not self.is_cycling_detected(item['slot'], item['item_level'])  # Исключаем зацикленные
                     ]
                     if available_items:
-                        min_item_idx = min(available_items, key=lambda x: x[1]['item_level'])[0]
+                        min_item_idx = available_items[0][0]  # Берем самый приоритетный
                         current_level = upgraded_items[min_item_idx]['item_level']
                         item_slot = upgraded_items[min_item_idx]['slot']
                         item_name = upgraded_items[min_item_idx]['name']
@@ -603,28 +882,9 @@ class UpgradeOptimizer:
                             next_level = 727 if current_level < 727 else None
                         # Ограничиваем уровнем сложности
                         if next_level and next_level > get_max_level_for_difficulty(item_difficulty):
-                            next_level = None
-                        if next_level is None:
-                            logger.info("Все предметы достигли максимального уровня")
-                            # Проверяем возможность изготовления
-                            if self.crafted_items_count < MAX_CRAFTED_ITEMS:
-                                craftable_items = [
-                                    (i, item) for i, item in enumerate(upgraded_items)
-                                    if item['slot'] not in NON_CRAFTABLE_SLOTS
-                                    and item['slot'] not in self.crafted_slots
-                                    and item['item_level'] < 727
-                                ]
-                                if craftable_items:
-                                    min_item_idx = min(craftable_items, key=lambda x: x[1]['item_level'])[0]
-                                    current_level = upgraded_items[min_item_idx]['item_level']
-                                    item_slot = upgraded_items[min_item_idx]['slot']
-                                    item_name = upgraded_items[min_item_idx]['name']
-                                    is_special = upgraded_items[min_item_idx]['is_special']
-                                    # Продолжаем с изготовлением
-                                    continue
-                            break
+                            next_level = min(next_level, 727)
                     else:
-                        logger.info("Все предметы достигли максимального уровня")
+                        logger.info("Все предметы достигли максимального уровня или в цикле")
                         # Проверяем возможность изготовления
                         if self.crafted_items_count < MAX_CRAFTED_ITEMS:
                             craftable_items = [
@@ -634,7 +894,9 @@ class UpgradeOptimizer:
                                 and item['item_level'] < 727
                             ]
                             if craftable_items:
-                                min_item_idx = min(craftable_items, key=lambda x: x[1]['item_level'])[0]
+                                # Сортируем по уровню
+                                craftable_items.sort(key=lambda x: x[1]['item_level'])
+                                min_item_idx = craftable_items[0][0]
                                 current_level = upgraded_items[min_item_idx]['item_level']
                                 item_slot = upgraded_items[min_item_idx]['slot']
                                 item_name = upgraded_items[min_item_idx]['name']
@@ -643,7 +905,7 @@ class UpgradeOptimizer:
                                 continue
                         break
 
-                if next_level is not None:
+                if next_level is not None and next_level > current_level:
                     # Рассчитываем стоимость улучшения
                     cost = get_upgrade_cost(current_level, next_level)
 
@@ -676,6 +938,13 @@ class UpgradeOptimizer:
 
                     step += 1
                     current_avg = new_avg
+                else:
+                    # Если не можем улучить, проверяем возможность изготовления
+                    if self.can_craft_item(item_slot) and current_level < 727:
+                        # Продолжаем с изготовлением
+                        continue
+                    else:
+                        break
 
             # Проверяем достижение цели
             if current_avg >= self.target_average:
@@ -687,6 +956,10 @@ class UpgradeOptimizer:
 
         # Создаем копию финальных предметов для вывода
         final_items = [item.copy() for item in upgraded_items]
+
+        # Генерируем рекомендации
+        recommendations = generate_recommendations(self.items, self.target_average, self.crafted_slots, self.crafted_items_count)
+
         result = {
             "current_average": round(self.current_average, 2),
             "final_average": round(current_avg, 2),
@@ -703,7 +976,10 @@ class UpgradeOptimizer:
             "goal_reached": current_avg >= self.target_average,
             "efficiency": round(efficiency, 2),
             "current_items": self.items,
-            "final_items": final_items
+            "final_items": final_items,
+            "strategy": self.strategy,
+            "strategy_name": OPTIMIZATION_STRATEGIES[self.strategy]["name"],
+            "recommendations": recommendations
         }
 
         logger.info(f"Оптимизация завершена. Ресурсы: {total_resource_cost}, Среднее: {current_avg:.2f}")
@@ -717,7 +993,6 @@ class UpgradeOptimizer:
 def handle_api_errors(f):
     """Декоратор для централизованной обработки ошибок API."""
 
-    @wraps(f)
     def wrapper(*args, **kwargs):
         try:
             return f(*args, **kwargs)
@@ -728,6 +1003,7 @@ def handle_api_errors(f):
             logger.error(f"Внутренняя ошибка сервера: {e}")
             return jsonify({"error": "Внутренняя ошибка сервера"}), 500
 
+    wrapper.__name__ = f.__name__
     return wrapper
 
 
@@ -740,6 +1016,17 @@ def index():
     """Главная страница приложения."""
     return render_template('index.html')
 
+@app.route('/manifest.json')
+def manifest():
+    """Манифест для PWA"""
+    return jsonify({
+        "name": "Raider.IO Optimizer",
+        "short_name": "RaiderOptimizer",
+        "start_url": "/",
+        "display": "standalone",
+        "background_color": "#1e3c72",
+        "description": "Оптимизация улучшений предметов World of Warcraft"
+    })
 
 @app.route('/api/realms')
 def get_realms():
@@ -772,9 +1059,9 @@ def get_realms():
             "resource3": SPECIAL_UPGRADE_COST_727[2]
         },
         "special_items": SPECIAL_ITEMS,
-        "max_levels": MAX_LEVEL_BY_DIFFICULTY
+        "max_levels": MAX_LEVEL_BY_DIFFICULTY,
+        "strategies": OPTIMIZATION_STRATEGIES
     })
-
 
 @app.route('/api/character', methods=['POST'])
 @handle_api_errors
@@ -791,6 +1078,7 @@ def analyze_character():
     realm = data.get('realm', '').strip()
     character_name = data.get('character_name', '').strip()
     target_average = data.get('target_average')
+    strategy = data.get('strategy', 'balanced')
 
     if not realm:
         return jsonify({"error": "Необходимо указать сервер"}), 400
@@ -809,6 +1097,9 @@ def analyze_character():
     if target_average <= 0:
         return jsonify({"error": "Целевое значение должно быть положительным"}), 400
 
+    if strategy not in OPTIMIZATION_STRATEGIES:
+        strategy = 'balanced'  # По умолчанию
+
     character = CharacterData(region, realm, character_name)
     if not character.fetch_data():
         return jsonify({"error": "Персонаж не найден. Проверьте правильность введенных данных."}), 404
@@ -817,7 +1108,7 @@ def analyze_character():
     if not items:
         return jsonify({"error": "Не удалось получить данные о предметах персонажа"}), 400
 
-    optimizer = UpgradeOptimizer(items, target_average)
+    optimizer = UpgradeOptimizer(items, target_average, strategy)
     optimization_result = optimizer.find_optimal_path()
 
     end_time = datetime.now()
@@ -841,13 +1132,110 @@ def analyze_character():
     logger.info(f"Анализ завершен за {processing_time:.2f} секунд")
     return jsonify(result)
 
+@app.route('/api/strategies/compare', methods=['POST'])
+@handle_api_errors
+def compare_strategies_api():
+    """Сравнивает разные стратегии оптимизации."""
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "Неверный формат данных"}), 400
+
+    region = data.get('region', 'eu').lower()
+    realm = data.get('realm', '').strip()
+    character_name = data.get('character_name', '').strip()
+    target_average = data.get('target_average')
+
+    if not realm or not character_name or target_average is None:
+        return jsonify({"error": "Необходимо указать все параметры"}), 400
+
+    try:
+        target_average = float(target_average)
+    except (ValueError, TypeError):
+        return jsonify({"error": "Целевое значение должно быть числом"}), 400
+
+    character = CharacterData(region, realm, character_name)
+    if not character.fetch_data():
+        return jsonify({"error": "Персонаж не найден"}), 404
+
+    items = character.get_equipment_items()
+    if not items:
+        return jsonify({"error": "Не удалось получить данные о предметах"}), 400
+
+    comparison = compare_strategies(items, target_average)
+
+    return jsonify({
+        "status": "success",
+        "comparison": comparison,
+        "character": {
+            "name": character_name,
+            "realm": realm,
+            "region": REGIONS_LOCALIZED.get(region, region.upper())
+        }
+    })
+
+@app.route('/api/profiles', methods=['GET', 'POST'])
+def manage_profiles():
+    """Управление профилями оптимизации"""
+    if request.method == 'POST':
+        profile_data = request.get_json()
+        profile_id = hashlib.md5(str(datetime.now()).encode()).hexdigest()[:8]
+        profiles_storage[profile_id] = {
+            "id": profile_id,
+            "created_at": datetime.now().isoformat(),
+            "data": profile_data
+        }
+        return jsonify({"status": "saved", "profile_id": profile_id})
+    else:
+        # Вернуть список профилей
+        profiles_list = []
+        for profile_id, profile_data in profiles_storage.items():
+            profiles_list.append({
+                "id": profile_id,
+                "created_at": profile_data["created_at"],
+                "character": profile_data["data"].get("character", {}),
+                "target_average": profile_data["data"].get("target_average", 0)
+            })
+        return jsonify({"profiles": profiles_list})
+
+@app.route('/api/profiles/<profile_id>', methods=['GET', 'DELETE'])
+def profile_detail(profile_id):
+    """Детали профиля"""
+    if request.method == 'GET':
+        if profile_id in profiles_storage:
+            return jsonify(profiles_storage[profile_id])
+        else:
+            return jsonify({"error": "Профиль не найден"}), 404
+    else:
+        if profile_id in profiles_storage:
+            del profiles_storage[profile_id]
+            return jsonify({"status": "deleted"})
+        else:
+            return jsonify({"error": "Профиль не найден"}), 404
+
+@app.route('/api/export/<format_type>', methods=['POST'])
+def export_results(format_type):
+    """Экспорт результатов в разных форматах"""
+    data = request.get_json()
+
+    if format_type == "json":
+        return jsonify(data)
+    elif format_type == "csv":
+        # Простая реализация CSV экспорта
+        csv_content = "Slot,Current Level,Final Level,Action,Cost\n"
+        for item in data.get("final_items", []):
+            csv_content += f"{item.get('readable_slot', '')},{item.get('item_level', '')},,,\n"
+        return Response(csv_content, mimetype='text/csv', headers={
+            'Content-Disposition': 'attachment; filename=raider_optimizer_export.csv'
+        })
+    else:
+        return jsonify({"error": "Неподдерживаемый формат"}), 400
 
 @app.route('/api/stats')
 def get_stats():
     """Возвращает статистику API."""
     return jsonify({
         "status": "online",
-        "version": "2.2.0",
+        "version": "3.0.0",
         "supported_regions": list(REGIONS_LOCALIZED.keys()),
         "supported_realms_eu": len(EU_REALMS),
         "upgrade_levels": UPGRADE_LEVELS,
@@ -865,21 +1253,19 @@ def get_stats():
         },
         "special_items": SPECIAL_ITEMS,
         "max_levels": MAX_LEVEL_BY_DIFFICULTY,
+        "strategies": OPTIMIZATION_STRATEGIES,
         "last_updated": datetime.now().isoformat()
     })
-
 
 # Обработка ошибок
 @app.errorhandler(404)
 def not_found(error):
     return jsonify({"error": "Страница не найдена"}), 404
 
-
 @app.errorhandler(500)
 def internal_error(error):
     logger.error(f"Внутренняя ошибка сервера: {error}")
     return jsonify({"error": "Внутренняя ошибка сервера"}), 500
-
 
 if __name__ == '__main__':
     # Получаем параметры из переменных окружения
@@ -887,5 +1273,5 @@ if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     debug = os.environ.get('DEBUG', 'False').lower() == 'true'
 
-    logger.info(f"Запуск Raider.IO Optimizer на {host}:{port}")
+    logger.info(f"Запуск Raider.IO Optimizer на {hosЙt}:{port}")
     app.run(host=host, port=port, debug=debug)

@@ -5,42 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Оптимизатор Улучшений Raider.IO</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-    <style>
-        /* Добавляем стили для сложности предметов */
-        .item-difficulty {
-            font-size: 0.7em;
-            padding: 2px 6px;
-            border-radius: 3px;
-            font-weight: bold;
-            margin-top: 4px;
-            display: inline-block;
-            text-transform: uppercase;
-        }
-
-        .difficulty-mythic {
-            background: linear-gradient(135deg, #ff8000, #ff4500);
-            color: white;
-            border: 1px solid #cc6600;
-        }
-
-        .difficulty-heroic {
-            background: linear-gradient(135deg, #0070dd, #0055aa);
-            color: white;
-            border: 1px solid #0055aa;
-        }
-
-        .difficulty-normal {
-            background: linear-gradient(135deg, #1eff00, #00cc00);
-            color: black;
-            border: 1px solid #00aa00;
-        }
-
-        .difficulty-unknown {
-            background: linear-gradient(135deg, #666666, #444444);
-            color: white;
-            border: 1px solid #333333;
-        }
-    </style>
 </head>
 <body>
     <div class="container">
@@ -83,6 +47,44 @@
                         </div>
                     </div>
 
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="strategy">Стратегия оптимизации:</label>
+                            <select id="strategy">
+                                <option value="balanced">Экономичная (минимум ресурсов)</option>
+                                <option value="cost_efficient">Тщательная (максимум ресурсов)</option>
+                                <option value="fastest">Быстрая (средний расход)</option>
+                            </select>
+                            <div class="strategy-description" id="strategyDescription">
+                                Экономичная стратегия минимизирует затраты ресурсов для достижения цели.
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="advanced-options">
+                        <div class="advanced-toggle" id="advancedToggle">
+                            <span>⚙️ Дополнительные настройки</span>
+                        </div>
+                        <div class="advanced-content" id="advancedContent" style="display: none;">
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="max_crafted_items">Максимум изготавливаемых предметов:</label>
+                                    <input type="number" id="max_crafted_items" min="0" max="9" value="9">
+                                </div>
+                                <div class="form-group">
+                                    <label for="budget_limit">Лимит бюджета (ресурсы):</label>
+                                    <input type="number" id="budget_limit" min="0" placeholder="Не ограничено">
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label>
+                                    <input type="checkbox" id="exclude_trinkets" checked>
+                                    Исключить аксессуары из изготовления
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+
                     <button type="submit" id="analyzeBtn">Анализировать улучшения</button>
                 </form>
             </div>
@@ -94,20 +96,37 @@
             </div>
 
             <div class="results-section" id="resultsSection">
-                <div id="characterInfo" class="character-info" style="display: none;"></div>
+                <div class="results-header">
+                    <div id="characterInfo" class="character-info" style="display: none;"></div>
+                    <div class="results-actions">
+                        <button id="compareStrategiesBtn" class="btn-secondary">Сравнить стратегии</button>
+                        <button id="exportJsonBtn" class="btn-secondary">Экспорт JSON</button>
+                        <button id="saveProfileBtn" class="btn-secondary">Сохранить профиль</button>
+                    </div>
+                </div>
+
                 <div id="resultMessage"></div>
                 <div id="summaryCards" class="summary-cards"></div>
                 <div id="resourcesInfo" class="resources-info" style="display: none;"></div>
 
                 <!-- Текущая экипировка -->
                 <div id="currentItemsSection">
+                    <div class="section-header">
+                        <h3>Текущая экипировка:</h3>
+                        <div class="visualization-toggle" id="currentVisualizationToggle">📊 Визуализация</div>
+                    </div>
                     <div id="currentItems" class="items-grid"></div>
+                    <div id="currentVisualization" class="items-visualization" style="display: none;"></div>
                 </div>
 
                 <!-- Финальная экипировка -->
                 <div id="finalItemsSection" style="display: none;">
-                    <h3>Экипировка после улучшений:</h3>
+                    <div class="section-header">
+                        <h3>Экипировка после улучшений:</h3>
+                        <div class="visualization-toggle" id="finalVisualizationToggle">📊 Визуализация</div>
+                    </div>
                     <div id="finalItems" class="items-grid"></div>
+                    <div id="finalVisualization" class="items-visualization" style="display: none;"></div>
                 </div>
 
                 <!-- Сводка по изготовленным предметам -->
@@ -116,8 +135,48 @@
                     <div id="craftedItemsList"></div>
                 </div>
 
+                <!-- Рекомендации -->
+                <div id="recommendationsSection" class="recommendations-section" style="display: none;">
+                    <h3>Рекомендации:</h3>
+                    <div id="recommendationsList"></div>
+                </div>
+
                 <div id="upgradesList" class="upgrades-list"></div>
                 <div id="additionalInfo" class="stats-grid" style="display: none;"></div>
+            </div>
+
+            <!-- Модальное окно сравнения стратегий -->
+            <div id="strategyComparisonModal" class="modal" style="display: none;">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h2>Сравнение стратегий</h2>
+                        <span class="close" id="closeStrategyComparison">&times;</span>
+                    </div>
+                    <div class="modal-body" id="strategyComparisonContent">
+                        <div class="loading-spinner">Загрузка сравнения...</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Модальное окно сохранения профиля -->
+            <div id="saveProfileModal" class="modal" style="display: none;">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h2>Сохранить профиль</h2>
+                        <span class="close" id="closeSaveProfile">&times;</span>
+                    </div>
+                    <div class="modal-body">
+                        <div class="form-group">
+                            <label for="profileName">Название профиля:</label>
+                            <input type="text" id="profileName" placeholder="Введите название профиля">
+                        </div>
+                        <div class="form-group">
+                            <label for="profileDescription">Описание (необязательно):</label>
+                            <textarea id="profileDescription" placeholder="Добавьте описание к профилю"></textarea>
+                        </div>
+                        <button id="confirmSaveProfile" class="btn-primary">Сохранить</button>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -126,9 +185,136 @@
         // Глобальные переменные
         let allRealms = [];
         let filteredRealms = [];
+        let currentResults = null;
+
+        // Описания стратегий
+        const strategyDescriptions = {
+            'balanced': 'Экономичная стратегия минимизирует затраты ресурсов для достижения цели.',
+            'cost_efficient': 'Тщательная стратегия использует больше ресурсов, но обеспечивает более точное достижение цели.',
+            'fastest': 'Быстрая стратегия обеспечивает средний баланс между затратами и скоростью.'
+        };
+
+        // Обновляем описание стратегии при изменении выбора
+        document.addEventListener('DOMContentLoaded', function() {
+            const strategySelect = document.getElementById('strategy');
+            const strategyDescription = document.getElementById('strategyDescription');
+
+            strategySelect.addEventListener('change', function() {
+                strategyDescription.textContent = strategyDescriptions[this.value];
+            });
+
+            // Загружаем список серверов
+            loadRealms();
+
+            // Настройка обработчиков событий
+            setupEventListeners();
+        });
+
+        function setupEventListeners() {
+            // Переключение дополнительных настроек
+            document.getElementById('advancedToggle').addEventListener('click', function() {
+                const content = document.getElementById('advancedContent');
+                content.style.display = content.style.display === 'none' ? 'block' : 'none';
+            });
+
+            // Переключение визуализации текущей экипировки
+            document.getElementById('currentVisualizationToggle').addEventListener('click', function() {
+                toggleVisualization('current');
+            });
+
+            // Переключение визуализации финальной экипировки
+            document.getElementById('finalVisualizationToggle').addEventListener('click', function() {
+                toggleVisualization('final');
+            });
+
+            // Кнопка сравнения стратегий
+            document.getElementById('compareStrategiesBtn').addEventListener('click', compareStrategies);
+
+            // Кнопка экспорта JSON
+            document.getElementById('exportJsonBtn').addEventListener('click', exportJson);
+
+            // Кнопка сохранения профиля
+            document.getElementById('saveProfileBtn').addEventListener('click', openSaveProfileModal);
+
+            // Модальные окна
+            document.getElementById('closeStrategyComparison').addEventListener('click', function() {
+                document.getElementById('strategyComparisonModal').style.display = 'none';
+            });
+
+            document.getElementById('closeSaveProfile').addEventListener('click', function() {
+                document.getElementById('saveProfileModal').style.display = 'none';
+            });
+
+            document.getElementById('confirmSaveProfile').addEventListener('click', saveProfile);
+
+            // Закрытие модальных окон при клике вне их
+            window.addEventListener('click', function(event) {
+                const strategyModal = document.getElementById('strategyComparisonModal');
+                const saveModal = document.getElementById('saveProfileModal');
+
+                if (event.target === strategyModal) {
+                    strategyModal.style.display = 'none';
+                }
+                if (event.target === saveModal) {
+                    saveModal.style.display = 'none';
+                }
+            });
+        }
+
+        function toggleVisualization(type) {
+            const visualization = document.getElementById(type + 'Visualization');
+            const toggle = document.getElementById(type + 'VisualizationToggle');
+
+            if (visualization.style.display === 'none') {
+                visualization.style.display = 'block';
+                toggle.textContent = '📋 Список';
+                renderVisualization(type);
+            } else {
+                visualization.style.display = 'none';
+                toggle.textContent = '📊 Визуализация';
+            }
+        }
+
+        function renderVisualization(type) {
+            if (!currentResults) return;
+
+            const items = currentResults[type + '_items'] || [];
+            const container = document.getElementById(type + 'Visualization');
+
+            // Создаем тепловую карту уровней предметов
+            let visualizationHTML = '<div class="heatmap-container">';
+            visualizationHTML += '<div class="heatmap-legend">';
+            visualizationHTML += '<div class="legend-item"><div class="color-box" style="background-color: #9D9D9D;"></div><span>680-704</span></div>';
+            visualizationHTML += '<div class="legend-item"><div class="color-box" style="background-color: #1EFF00;"></div><span>704-717</span></div>';
+            visualizationHTML += '<div class="legend-item"><div class="color-box" style="background-color: #0070DD;"></div><span>717-727</span></div>';
+            visualizationHTML += '<div class="legend-item"><div class="color-box" style="background-color: #FF8C00;"></div><span>727+</span></div>';
+            visualizationHTML += '</div>';
+
+            visualizationHTML += '<div class="heatmap-grid">';
+            items.forEach(item => {
+                const color = getItemColor(item.item_level);
+                visualizationHTML += `
+                    <div class="heatmap-item" style="background-color: ${color};" title="${item.readable_slot}: ${item.item_level}">
+                        <div class="heatmap-item-icon">${item.slot_icon}</div>
+                        <div class="heatmap-item-level">${item.item_level}</div>
+                    </div>
+                `;
+            });
+            visualizationHTML += '</div>';
+            visualizationHTML += '</div>';
+
+            container.innerHTML = visualizationHTML;
+        }
+
+        function getItemColor(itemLevel) {
+            if (itemLevel >= 727) return "#FF8C00";  // Оранжевый
+            if (itemLevel >= 717) return "#0070DD";  // Синий
+            if (itemLevel >= 704) return "#1EFF00";  // Зеленый
+            return "#9D9D9D";  // Серый
+        }
 
         // Загружаем список серверов при загрузке страницы
-        document.addEventListener('DOMContentLoaded', async function() {
+        async function loadRealms() {
             try {
                 const response = await fetch('/api/realms');
                 const data = await response.json();
@@ -140,7 +326,7 @@
             } catch (error) {
                 console.error('Не удалось загрузить список серверов:', error);
             }
-        });
+        }
 
         // Обработчик формы
         document.getElementById('characterForm').addEventListener('submit', async function(e) {
@@ -150,6 +336,10 @@
             const realm = document.getElementById('realm').value.trim();
             const characterName = document.getElementById('character_name').value.trim();
             const targetAverage = parseFloat(document.getElementById('target_average').value);
+            const strategy = document.getElementById('strategy').value;
+            const maxCraftedItems = parseInt(document.getElementById('max_crafted_items').value);
+            const budgetLimit = document.getElementById('budget_limit').value ? parseInt(document.getElementById('budget_limit').value) : null;
+            const excludeTrinkets = document.getElementById('exclude_trinkets').checked;
 
             // Валидация
             if (!realm) {
@@ -188,13 +378,18 @@
                         region: region,
                         realm: realm,
                         character_name: characterName,
-                        target_average: targetAverage
+                        target_average: targetAverage,
+                        strategy: strategy,
+                        max_crafted_items: maxCraftedItems,
+                        budget_limit: budgetLimit,
+                        exclude_trinkets: excludeTrinkets
                     })
                 });
 
                 const data = await response.json();
 
                 if (response.ok) {
+                    currentResults = data;
                     displayResults(data);
                 } else {
                     showError(data.error || 'Произошла ошибка');
@@ -299,19 +494,22 @@
             const craftedItemsList = document.getElementById('craftedItemsList');
             const upgradesList = document.getElementById('upgradesList');
             const additionalInfo = document.getElementById('additionalInfo');
+            const recommendationsSection = document.getElementById('recommendationsSection');
+            const recommendationsList = document.getElementById('recommendationsList');
 
             // Показываем информацию о персонаже
             if (data.character) {
                 characterInfo.innerHTML = `
                     <h3>Персонаж: ${data.character.name}</h3>
                     <p>Сервер: ${data.character.realm} (${data.character.region})</p>
+                    <p>Стратегия: ${data.strategy_name}</p>
                 `;
                 characterInfo.style.display = 'block';
             }
 
             // Показываем текущую экипировку
             if (data.current_items && data.current_items.length > 0) {
-                let itemsHTML = '<h3>Текущая экипировка:</h3>';
+                let itemsHTML = '';
                 data.current_items.forEach(item => {
                     // Извлекаем информацию о сложности
                     const difficulty = item.difficulty || '';
@@ -396,12 +594,34 @@
                 craftedSummary.style.display = 'none';
             }
 
+            // Показываем рекомендации
+            if (data.recommendations && data.recommendations.length > 0) {
+                let recommendationsHTML = '<div class="recommendations-list">';
+                data.recommendations.forEach(rec => {
+                    recommendationsHTML += `
+                        <div class="recommendation-item ${rec.type}">
+                            <div class="recommendation-icon">ℹ️</div>
+                            <div class="recommendation-content">
+                                <div class="recommendation-message">${rec.message}</div>
+                                ${rec.items ? `<div class="recommendation-details">Предметы: ${rec.items.join(', ')}</div>` : ''}
+                                ${rec.slots ? `<div class="recommendation-details">Слоты: ${rec.slots.join(', ')}</div>` : ''}
+                            </div>
+                        </div>
+                    `;
+                });
+                recommendationsHTML += '</div>';
+                recommendationsList.innerHTML = recommendationsHTML;
+                recommendationsSection.style.display = 'block';
+            } else {
+                recommendationsSection.style.display = 'none';
+            }
+
             // Показываем сообщение
             if (data.message) {
                 const messageType = data.goal_reached ? 'success' : (data.message.includes('достигнуто') ? 'success' : 'warning');
                 resultMessage.innerHTML = `<div class="${messageType}">${data.message}</div>`;
             } else if (data.goal_reached) {
-                resultMessage.innerHTML = `<div class="success">✅ Цель достигнута!</div>`;
+                resultMessage.innerHTML = `<div class="success">✅ Целевое значение уже достигнуто!</div>`;
             } else {
                 resultMessage.innerHTML = `<div class="warning">⚠️ ${data.message || 'Цель не достигнута. Максимальное достижимое среднее: ' + data.final_average}</div>`;
             }
@@ -527,9 +747,155 @@
             document.getElementById('currentItemsSection').style.display = 'none';
             document.getElementById('finalItemsSection').style.display = 'none';
             document.getElementById('craftedSummary').style.display = 'none';
+            document.getElementById('recommendationsSection').style.display = 'none';
             document.getElementById('upgradesList').innerHTML = '';
             document.getElementById('additionalInfo').style.display = 'none';
             resultsSection.style.display = 'block';
+        }
+
+        // Функции для новых возможностей
+        async function compareStrategies() {
+            if (!currentResults || !currentResults.character) {
+                alert('Сначала выполните анализ персонажа');
+                return;
+            }
+
+            const modal = document.getElementById('strategyComparisonModal');
+            const content = document.getElementById('strategyComparisonContent');
+
+            content.innerHTML = '<div class="loading-spinner">Загрузка сравнения...</div>';
+            modal.style.display = 'block';
+
+            try {
+                const response = await fetch('/api/strategies/compare', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        region: currentResults.character.region.toLowerCase().replace('(', '').replace(')', ''),
+                        realm: currentResults.character.realm,
+                        character_name: currentResults.character.name,
+                        target_average: currentResults.target_average
+                    })
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    renderStrategyComparison(data.comparison);
+                } else {
+                    content.innerHTML = `<div class="error">Ошибка: ${data.error}</div>`;
+                }
+            } catch (error) {
+                content.innerHTML = `<div class="error">Ошибка подключения: ${error.message}</div>`;
+            }
+        }
+
+        function renderStrategyComparison(comparison) {
+            const content = document.getElementById('strategyComparisonContent');
+
+            let html = `
+                <div class="strategy-comparison">
+                    <table class="comparison-table">
+                        <thead>
+                            <tr>
+                                <th>Стратегия</th>
+                                <th>Всего ресурсов</th>
+                                <th>Шагов</th>
+                                <th>Изготовлено</th>
+                                <th>Итоговое среднее</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+            `;
+
+            Object.keys(comparison).forEach(strategyKey => {
+                const strategy = comparison[strategyKey];
+                html += `
+                    <tr>
+                        <td>${strategy.strategy_name}</td>
+                        <td>${strategy.total_cost}</td>
+                        <td>${strategy.steps}</td>
+                        <td>${strategy.crafted_items}</td>
+                        <td>${strategy.final_average}</td>
+                    </tr>
+                `;
+            });
+
+            html += `
+                        </tbody>
+                    </table>
+                    <div class="comparison-note">
+                        <p>💡 Выберите стратегию, которая лучше всего соответствует вашим целям и ресурсам.</p>
+                    </div>
+                </div>
+            `;
+
+            content.innerHTML = html;
+        }
+
+        function exportJson() {
+            if (!currentResults) {
+                alert('Нет данных для экспорта');
+                return;
+            }
+
+            const dataStr = JSON.stringify(currentResults, null, 2);
+            const dataUri = 'data:application/json;charset=utf-8,'+ encodeURIComponent(dataStr);
+
+            const exportFileDefaultName = `raider-optimizer-${new Date().toISOString().slice(0,10)}.json`;
+
+            const linkElement = document.createElement('a');
+            linkElement.setAttribute('href', dataUri);
+            linkElement.setAttribute('download', exportFileDefaultName);
+            linkElement.click();
+        }
+
+        function openSaveProfileModal() {
+            if (!currentResults) {
+                alert('Сначала выполните анализ персонажа');
+                return;
+            }
+
+            document.getElementById('profileName').value = '';
+            document.getElementById('profileDescription').value = '';
+            document.getElementById('saveProfileModal').style.display = 'block';
+        }
+
+        async function saveProfile() {
+            const profileName = document.getElementById('profileName').value.trim();
+            const profileDescription = document.getElementById('profileDescription').value.trim();
+
+            if (!profileName) {
+                alert('Пожалуйста, введите название профиля');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/profiles', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        name: profileName,
+                        description: profileDescription,
+                        data: currentResults
+                    })
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    alert('Профиль успешно сохранен!');
+                    document.getElementById('saveProfileModal').style.display = 'none';
+                } else {
+                    alert('Ошибка при сохранении профиля: ' + data.error);
+                }
+            } catch (error) {
+                alert('Ошибка подключения: ' + error.message);
+            }
         }
     </script>
 </body>
